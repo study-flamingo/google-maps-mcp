@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import fetch from "node-fetch";
 
+
 // Response interfaces
 interface GoogleMapsResponse {
   status: string;
@@ -133,6 +134,9 @@ interface DirectionsResponse extends GoogleMapsResponse {
   }>;
 }
 
+
+// Functions
+// Function to get the Google Maps API key from environment variables
 function getApiKey(): string {
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
@@ -143,7 +147,7 @@ function getApiKey(): string {
   }
 
 const GOOGLE_MAPS_API_KEY = getApiKey();
-
+  
 // Tool definitions
 const GEOCODE_TOOL: Tool = {
     name: "maps_geocode",
@@ -372,46 +376,57 @@ async function handlePlaceSearch(
   location?: { latitude: number; longitude: number },
   radius?: number
 ) {
-  const url = new URL("https://maps.googleapis.com/maps/api/place/textsearch/json");
-  url.searchParams.append("query", query);
-  url.searchParams.append("key", GOOGLE_MAPS_API_KEY);
+  try {
+    const { Place } = await google.maps.importLibrary("places") as google.maps.PlacesLibrary;
+    const request = {
+      textQuery: query,
+      fields: ['displayName', 'location', 'businessStatus'],
+      ...(location
+        ? { locationBias: { lat: location.latitude, lng: location.longitude } }
+        : {}),
+      language: 'en-US',
+      maxResultCount: 10,
+      region: 'us',
+      useStrictTypeFiltering: false,
+    };
 
-  if (location) {
-    url.searchParams.append("location", `${location.latitude},${location.longitude}`);
-  }
-  if (radius) {
-    url.searchParams.append("radius", radius.toString());
-  }
+    const {places} = await Place.searchByText(request);
 
-  const response = await fetch(url.toString());
-  const data = await response.json() as PlacesSearchResponse;
+    if (!places.length) {
+      return {
+        content: [{
+          type: "text",
+          text: `No results found for query: ${query}`
+        }],
+        isError: true
+      };
+    }
 
-  if (data.status !== "OK") {
     return {
       content: [{
         type: "text",
-        text: `Place search failed: ${data.error_message || data.status}`
+        text: JSON.stringify({
+          places: places.map((place: any) => ({
+            name: place.displayName || place.name,
+            formatted_address: place.formatted_address || place.address || "",
+            location: place.location || (place.geometry ? place.geometry.location : undefined),
+            place_id: place.place_id,
+            rating: place.rating,
+            types: place.types
+          }))
+        }, null, 2)
+      }],
+      isError: false
+    };
+  } catch (error) {
+    return {
+      content: [{
+        type: "text",
+        text: `Place search error: ${error instanceof Error ? error.message : String(error)}`
       }],
       isError: true
     };
   }
-
-  return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({
-        places: data.results.map((place) => ({
-          name: place.name,
-          formatted_address: place.formatted_address,
-          location: place.geometry.location,
-          place_id: place.place_id,
-          rating: place.rating,
-          types: place.types
-        }))
-      }, null, 2)
-    }],
-    isError: false
-  };
 }
 
 async function handlePlaceDetails(place_id: string) {
